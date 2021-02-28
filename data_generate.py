@@ -1,7 +1,7 @@
 import random
 import math
 import time
-import numpy
+import numpy as np
 import pandas as pd
 from ast import literal_eval
 
@@ -11,7 +11,7 @@ DIS_UNIT, DIS_GAP, DIS_ROAD = 500, 35, 26
 NUM_UNIT = int(VELOCITY * TIME / DIS_UNIT)
 PT, FC = 46, 5.8*10**9
 PT, FC = 46, 5.8
-GAP_LEN, GAP_TIME = 32, 1  # 窗口长32，时间间隔1s
+GAP_LEN, GAP_TIME = 16, 1  # 窗口长16，时间间隔1s
 
 pos_col = random.uniform(0, 26)  # 距道路右侧距离
 pos_row = 0  # 距马路起始点距离。开30s，就是750m
@@ -91,8 +91,11 @@ def pos_to_state(matrix_pos, list_prb, len_move):
         for j in range(GAP_LEN):
             matrix_dis = generate_dis(j * GAP_TIME + len_move, matrix_pos[i])
             matrix_sinr = generate_sinr(matrix_dis)
-            matrix_tmp.append(numpy.transpose([matrix_sinr, list_prb]).tolist())
+            matrix_procss = np.transpose([matrix_sinr, list_prb]).tolist()
+            matrix_procss = (matrix_procss - np.mean(matrix_procss, axis=0)) / np.std(matrix_procss, axis=0)
+            matrix_tmp.append(matrix_procss)
         matrix_state.append(matrix_tmp)
+
     return matrix_state
 
 
