@@ -12,9 +12,9 @@ this = time.time()
 LIST_PRB, LIST_PRB_COPY = [18, 29, 24, 19, 15, 8, 28, 8, 11, 17], [18, 29, 24, 19, 15, 8, 28, 8, 11, 17]
 n_u, n_steps, n_input, = NUM_UNIT, GAP_LEN, 2
 n_hidden = 128
-n_hiddens = [n_hidden, n_hidden, n_hidden]
+n_hiddens = [n_hidden]
 learning_rate = 0.01
-lambda_m, lambda_k, lambda_gamma = 0.5, 0.5, 0.1
+lambda_m, lambda_k, lambda_gamma = 0.5, 0.25, 0.1
 train = True
 model_path ="/model/model.ckpt"
 sess = tf.Session()
@@ -50,7 +50,7 @@ def dynamic_RNN(x, weights, biases):
     with tf.variable_scope("MultiLSTM", reuse=tf.AUTO_REUSE):
         multi_rnn_cell = tf.nn.rnn_cell.MultiRNNCell([build_cell(n_h, 0) for n_h in n_hiddens])
         outputs, states = tf.nn.dynamic_rnn(multi_rnn_cell, x_in, dtype=tf.float32)
-        # outputs = tf.transpose(outputs, [1, 0, 2])  # (32, ?, 128) 32个时序，取最后一个时序outputs[-1]=(?,128)
+        # outputs = tf.transpose(outputs, [1, 0, 2])  # (16, ?, 128) 16个时序，取最后一个时序outputs[-1]=(?,128)
         # print(outputs.shape)
         # pred = tf.matmul(tf.gather(outputs, int(outputs.get_shape()[0]) - 1), weights['out']) + biases['out']
         # u = tf.sigmoid(pred)
@@ -76,11 +76,11 @@ def cnn(x):
     print(pool1.shape)
     # 将3维特征转换为1维向量
     flatten = tf.layers.flatten(pool1)
-    fc = tf.layers.dense(flatten, 400, activation=tf.nn.relu)
+    fc = tf.layers.dense(flatten, 200, activation=tf.nn.relu)
     dropout_fc = tf.layers.dropout(fc, rate=0.5)
     dense = tf.layers.dense(dropout_fc, n_u)
-    q = tf.nn.softmax(dense, name="softmax_tensor")
-    return q
+    # q = tf.nn.softmax(dense, name="softmax_tensor")
+    return dense
 
 
 u = dynamic_RNN(state_input, weights, biases)
@@ -93,6 +93,7 @@ saver = tf.train.Saver()
 
 
 def assign(tmp_state, queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, values_action, update):
+    values_target = values_action.copy()
     while queue_index.qsize() >= np.sum(tmp_ai):
         list_index, list_num = queue_index.get(), queue_num.get()
         for tmp_index in range(len(list_index)):
@@ -108,8 +109,12 @@ def assign(tmp_state, queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, 
         if LIST_PRB[list_action[index_action]] >= tmp_num:
             list_index.append(list_action[index_action])
             list_num.append(tmp_num)
-            reward += \
-                (tmp_state[0][list_action[index_action]][0] + lambda_m * tmp_num / tmp_ri[k]) * (k + 1) * lambda_k
+            mean_state = np.mean(tmp_state[0][:][0], axis=0)
+            std_state = np.std(tmp_state[0][:][0], axis=0)
+            values_target[list_action[index_action]] = \
+                ((tmp_state[0][list_action[index_action]][0]-mean_state)/std_state
+                 + lambda_m * tmp_num / tmp_ri[k]) * (k + 1) * lambda_k\
+                + lambda_gamma * np.max(values_action)
             LIST_PRB[list_action[index_action]] -= tmp_num
             break
         elif LIST_PRB[list_action[index_action]] == 0:
@@ -117,9 +122,12 @@ def assign(tmp_state, queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, 
         else:
             list_index.append(list_action[index_action])
             list_num.append(LIST_PRB[list_action[index_action]])
-            reward += \
-                (tmp_state[0][list_action[index_action]][0] + lambda_m * LIST_PRB[list_action[index_action]] / tmp_ri[k]) * (
-                            k + 1) * lambda_k
+            mean_state = np.mean(tmp_state[0][:][0], axis=0)
+            std_state = np.std(tmp_state[0][:][0], axis=0)
+            values_target[list_action[index_action]] = \
+                ((tmp_state[0][list_action[index_action]][0]-mean_state)/std_state
+                 + lambda_m * LIST_PRB[list_action[index_action]] / tmp_ri[k]) * (k + 1) * lambda_k\
+                + lambda_gamma * np.max(values_action)
             tmp_num -= LIST_PRB[list_action[index_action]]
             LIST_PRB[list_action[index_action]] = 0
             index_action += 1
@@ -130,7 +138,7 @@ def assign(tmp_state, queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, 
     else:
         for tmp_index in range(len(list_index)):
             LIST_PRB[list_index[tmp_index]] += list_num[tmp_index]
-    return queue_index, queue_num, reward
+    return queue_index, queue_num, values_target
 
 def plot_cost(list_cost):
     import matplotlib.pyplot as plt
@@ -142,18 +150,17 @@ def plot_cost(list_cost):
 
 def learn(queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, list_cost):
     tmp_state = pos_to_state([tmp_pos], LIST_PRB, len_move=(j + 1) * VELOCITY)  # 100辆车 * 32个时刻 * 10个基站 * 2种指标
-    log.info("获取q_target")
     values_action = sess.run(q_eval,
                              feed_dict={state_input: tmp_state})
     values_action = values_action[0]
-    log.info("下一个状态的参考q值: %s" % values_action)
-    queue_index, queue_num, reward = \
+    queue_index, queue_num, values_target = \
         assign(tmp_state[0], queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, values_action, update=False)
     tmp_state = pos_to_state([tmp_pos], LIST_PRB, len_move=j * VELOCITY)  # 100辆车 * 32个时刻 * 10个基站 * 2种指标
     log.info("更新参数ing")
+    log.info("下一个状态的参考q值: %s" % values_target)
     _, values_action, tmp_cost = sess.run([op, q_eval, loss],
                                           feed_dict={state_input: tmp_state,
-                                                     q_target: [reward + lambda_gamma * np.max(values_action)]})
+                                                     q_target: values_target})
     values_action = values_action[0]
     log.info("当前状态的q值: %s" % values_action)
     list_cost.append(tmp_cost)
