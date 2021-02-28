@@ -21,12 +21,12 @@ class Log:
             '%(log_color)s[%(asctime)s] [%(filename)s:%(lineno)d] [%(module)s:%(funcName)s] [%(levelname)s]- %(message)s',
             log_colors=log_colors_config)
 
-        # 创建一个 FileHandler，写到本地
-        fh = logging.handlers.TimedRotatingFileHandler(
-            self.logname, when='MIDNIGHT', interval=1, encoding='utf-8')
-        fh.setLevel(logging.DEBUG)
-        fh.setFormatter(self.formatter)
-        self.logger.addHandler(fh)
+        # # 创建一个 FileHandler，写到本地
+        # fh = logging.handlers.TimedRotatingFileHandler(
+        #     self.logname, when='MIDNIGHT', interval=1, encoding='utf-8')
+        # fh.setLevel(logging.DEBUG)
+        # fh.setFormatter(self.formatter)
+        # self.logger.addHandler(fh)
 
         # 创建一个StreamHandler,写到控制台
         ch = logging.StreamHandler()
