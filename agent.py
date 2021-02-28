@@ -85,8 +85,8 @@ def cnn(x):
 
 u = dynamic_RNN(state_input, weights, biases)
 q_eval = cnn(u)
-op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(
-    tf.reduce_mean(tf.squared_difference(q_target, q_eval)))
+loss = tf.reduce_mean(tf.squared_difference(q_target, q_eval))
+op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
 
 init = tf.global_variables_initializer()
 saver = tf.train.Saver()
@@ -132,8 +132,15 @@ def assign(tmp_state, queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, 
             LIST_PRB[list_index[tmp_index]] += list_num[tmp_index]
     return queue_index, queue_num, reward
 
+def plot_cost(list_cost):
+    import matplotlib.pyplot as plt
+    plt.plot(np.arange(len(list_cost)), list_cost)
+    plt.ylabel('Cost')
+    plt.xlabel('training steps')
+    # plt.show()
+    plt.savefig('cost.jpg', transparent=True, pad_inches=0)
 
-def learn(queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k):
+def learn(queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, list_cost):
     tmp_state = pos_to_state([tmp_pos], LIST_PRB, len_move=(j + 1) * VELOCITY)  # 100辆车 * 32个时刻 * 10个基站 * 2种指标
     log.info("获取q_target")
     values_action = sess.run(q_eval,
@@ -144,13 +151,15 @@ def learn(queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k):
         assign(tmp_state[0], queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, values_action, update=False)
     tmp_state = pos_to_state([tmp_pos], LIST_PRB, len_move=j * VELOCITY)  # 100辆车 * 32个时刻 * 10个基站 * 2种指标
     log.info("更新参数ing")
-    _, values_action = sess.run([op, q_eval], feed_dict={state_input: tmp_state,
-                                                         q_target: [reward + lambda_gamma * np.max(values_action)]})
+    _, values_action, tmp_cost = sess.run([op, q_eval, loss],
+                                          feed_dict={state_input: tmp_state,
+                                                     q_target: [reward + lambda_gamma * np.max(values_action)]})
     values_action = values_action[0]
     log.info("当前状态的q值: %s" % values_action)
+    list_cost.append(tmp_cost)
     queue_index, queue_num, reward = \
         assign(tmp_state[0], queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, values_action, update=True)
-    return queue_index, queue_num
+    return queue_index, queue_num, list_cost
 
 
 def train():
@@ -158,6 +167,7 @@ def train():
     sess.run(init)
     log.debug("开始训练")
     queue_index, queue_num = Queue(), Queue()
+    list_cost = []
     for idx_car in range(len(matrix_pos)):
         while not queue_index.empty():
             list_index, list_num = queue_index.get(), queue_num.get()
@@ -166,8 +176,12 @@ def train():
         for idx_prb in range(int(TIME / GAP_TIME)):
             for k in range(3, -1, -1):
                 for l in range(matrix_ai[idx_car][k]):
-                    log.debug("第%s辆车在第%s米的第%s类的第%s个。原数据：%s, %s, %s" % (idx_car, idx_prb*VELOCITY, k, l+1, matrix_pos[idx_car], matrix_ai[idx_car], matrix_ri[idx_car]))
-                    queue_index, queue_num = learn(queue_index, queue_num, matrix_pos[idx_car], matrix_ai[idx_car], matrix_ri[idx_car], idx_car, idx_prb, k)
+                    log.debug("第%s辆车在第%s米的第%s类的第%s个。原数据：%s, %s, %s"
+                              % (idx_car, idx_prb*VELOCITY, k, l+1, matrix_pos[idx_car], matrix_ai[idx_car], matrix_ri[idx_car]))
+                    queue_index, queue_num, list_cost = \
+                        learn(queue_index, queue_num, matrix_pos[idx_car], matrix_ai[idx_car], matrix_ri[idx_car],
+                              idx_car, idx_prb, k, list_cost)
+        plot_cost(list_cost)
     print(time.time() - this)
     saver.save(sess, model_path)
     print("训练结束，保存模型到{}".format(model_path))
