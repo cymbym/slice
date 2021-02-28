@@ -14,7 +14,7 @@ n_u, n_steps, n_input, = NUM_UNIT, GAP_LEN, 2
 n_hidden = 128
 n_hiddens = [n_hidden]
 learning_rate = 0.01
-lambda_m, lambda_k, lambda_gamma = 0.5, 0.25, 0.1
+lambda_m, lambda_k, lambda_gamma = 0.5, 0.2, 0.1
 train = True
 model_path ="/model/model.ckpt"
 sess = tf.Session()
@@ -113,7 +113,7 @@ def assign(tmp_state, queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, 
             std_state = np.std(tmp_state[0][:][0], axis=0)
             values_target[list_action[index_action]] = \
                 ((tmp_state[0][list_action[index_action]][0]-mean_state)/std_state
-                 + lambda_m * tmp_num / tmp_ri[k]) * (k + 1) * lambda_k\
+                 + lambda_m * tmp_num / tmp_ri[k]) * (k + 2) * lambda_k\
                 + lambda_gamma * np.max(values_action)
             LIST_PRB[list_action[index_action]] -= tmp_num
             break
@@ -126,11 +126,16 @@ def assign(tmp_state, queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, 
             std_state = np.std(tmp_state[0][:][0], axis=0)
             values_target[list_action[index_action]] = \
                 ((tmp_state[0][list_action[index_action]][0]-mean_state)/std_state
-                 + lambda_m * LIST_PRB[list_action[index_action]] / tmp_ri[k]) * (k + 1) * lambda_k\
+                 + lambda_m * LIST_PRB[list_action[index_action]] / tmp_ri[k]) * (k + 2) * lambda_k\
                 + lambda_gamma * np.max(values_action)
             tmp_num -= LIST_PRB[list_action[index_action]]
             LIST_PRB[list_action[index_action]] = 0
             index_action += 1
+    mean_state = np.mean(tmp_state[0][:][0], axis=0)
+    std_state = np.std(tmp_state[0][:][0], axis=0)
+    for idx in range(len(values_target)):
+        if values_target[idx] == values_action[idx]:
+            values_target[idx] = ((tmp_state[0][idx][0]-mean_state)/std_state) * lambda_k + lambda_gamma * np.max(values_action)
     if update:
         queue_index.put(list_index)
         queue_num.put(list_num)
