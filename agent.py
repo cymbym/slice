@@ -12,10 +12,11 @@ this = time.time()
 LIST_PRB, LIST_PRB_COPY = [18, 29, 24, 19, 15, 8, 28, 8, 11, 17], [18, 29, 24, 19, 15, 8, 28, 8, 11, 17]
 n_u, n_steps, n_input, = NUM_UNIT, GAP_LEN, 2
 n_hidden = 128
-n_hiddens = [n_hidden]
-learning_rate = 0.01
+n_hiddens = [n_hidden, n_hidden, n_hidden]
+learning_rate = 0.0001
 lambda_m, lambda_k, lambda_gamma = 0.5, 0.2, 0.1
-train = True
+TRAIN = False
+# TRAIN = True
 model_path ="/model/model.ckpt"
 sess = tf.Session()
 
@@ -61,7 +62,6 @@ def dynamic_RNN(x, weights, biases):
 
 def cnn(x):
     # 定义卷积层, 16个卷积核, 卷积核大小为5，用Relu激活
-
     print(x.shape)
     conv0 = tf.layers.conv2d(x, 16, 5, activation=tf.nn.relu)
     print(conv0.shape)
@@ -76,7 +76,7 @@ def cnn(x):
     print(pool1.shape)
     # 将3维特征转换为1维向量
     flatten = tf.layers.flatten(pool1)
-    fc = tf.layers.dense(flatten, 200, activation=tf.nn.relu)
+    fc = tf.layers.dense(flatten, 400, activation=tf.nn.relu)
     dropout_fc = tf.layers.dropout(fc, rate=0.5)
     dense = tf.layers.dense(dropout_fc, n_u)
     # q = tf.nn.softmax(dense, name="softmax_tensor")
@@ -109,10 +109,8 @@ def assign(tmp_state, queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, 
         if LIST_PRB[list_action[index_action]] >= tmp_num:
             list_index.append(list_action[index_action])
             list_num.append(tmp_num)
-            mean_state = np.mean(tmp_state[0][:][0], axis=0)
-            std_state = np.std(tmp_state[0][:][0], axis=0)
             values_target[list_action[index_action]] = \
-                ((tmp_state[0][list_action[index_action]][0]-mean_state)/std_state
+                (tmp_state[0][list_action[index_action]][0]
                  + lambda_m * tmp_num / tmp_ri[k]) * (k + 2) * lambda_k\
                 + lambda_gamma * np.max(values_action)
             LIST_PRB[list_action[index_action]] -= tmp_num
@@ -122,20 +120,16 @@ def assign(tmp_state, queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, 
         else:
             list_index.append(list_action[index_action])
             list_num.append(LIST_PRB[list_action[index_action]])
-            mean_state = np.mean(tmp_state[0][:][0], axis=0)
-            std_state = np.std(tmp_state[0][:][0], axis=0)
             values_target[list_action[index_action]] = \
-                ((tmp_state[0][list_action[index_action]][0]-mean_state)/std_state
+                (tmp_state[0][list_action[index_action]][0]
                  + lambda_m * LIST_PRB[list_action[index_action]] / tmp_ri[k]) * (k + 2) * lambda_k\
                 + lambda_gamma * np.max(values_action)
             tmp_num -= LIST_PRB[list_action[index_action]]
             LIST_PRB[list_action[index_action]] = 0
             index_action += 1
-    mean_state = np.mean(tmp_state[0][:][0], axis=0)
-    std_state = np.std(tmp_state[0][:][0], axis=0)
     for idx in range(len(values_target)):
         if values_target[idx] == values_action[idx]:
-            values_target[idx] = ((tmp_state[0][idx][0]-mean_state)/std_state) * lambda_k + lambda_gamma * np.max(values_action)
+            values_target[idx] = (tmp_state[0][idx][0]) * lambda_k + lambda_gamma * np.max(values_action)
     if update:
         queue_index.put(list_index)
         queue_num.put(list_num)
@@ -177,10 +171,11 @@ def learn(queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, list_cost):
 def train():
     matrix_pos, matrix_ai, matrix_ri = read_csv()
     sess.run(init)
+    # saver.restore(sess, model_path)
     log.debug("开始训练")
     queue_index, queue_num = Queue(), Queue()
     list_cost = []
-    for idx_car in range(len(matrix_pos)):
+    for idx_car in range(0, 30):
         while not queue_index.empty():
             list_index, list_num = queue_index.get(), queue_num.get()
             for tmp_index in range(len(list_index)):
@@ -198,6 +193,41 @@ def train():
     saver.save(sess, model_path)
     print("训练结束，保存模型到{}".format(model_path))
 
+
+def valid(queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, list_cost):
+    tmp_state = pos_to_state([tmp_pos], LIST_PRB, len_move=(j + 1) * VELOCITY)  # 100辆车 * 32个时刻 * 10个基站 * 2种指标
+    values_action = sess.run(q_eval,
+                             feed_dict={state_input: tmp_state})
+    values_action = values_action[0]
+    queue_index, queue_num, reward = \
+        assign(tmp_state[0], queue_index, queue_num, tmp_pos, tmp_ai, tmp_ri, i, j, k, values_action, update=True)
+    return queue_index, queue_num, list_cost
+
+
+def test():
+    matrix_pos, matrix_ai, matrix_ri = read_csv()
+    saver.restore(sess, model_path)
+    queue_index, queue_num = Queue(), Queue()
+    list_cost = []
+    for idx_car in range(30,60):
+        while not queue_index.empty():
+            list_index, list_num = queue_index.get(), queue_num.get()
+            for tmp_index in range(len(list_index)):
+                LIST_PRB[list_index[tmp_index]] += list_num[tmp_index]
+        for idx_prb in range(int(TIME / GAP_TIME)):
+            for k in range(3, -1, -1):
+                for l in range(matrix_ai[idx_car][k]):
+                    log.debug("第%s辆车在第%s米的第%s类的第%s个。原数据：%s, %s, %s"
+                              % (idx_car, idx_prb*VELOCITY, k, l+1, matrix_pos[idx_car], matrix_ai[idx_car], matrix_ri[idx_car]))
+                    queue_index, queue_num, list_cost = \
+                        valid(queue_index, queue_num, matrix_pos[idx_car], matrix_ai[idx_car], matrix_ri[idx_car],
+                              idx_car, idx_prb, k, list_cost)
+        plot_cost(list_cost)
+    print(time.time() - this)
+
 for variable_name in tf.global_variables():
     print(variable_name)
-train()
+if TRAIN:
+    train()
+else:
+    test()
